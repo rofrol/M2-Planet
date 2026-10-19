@@ -935,17 +935,25 @@ void primary_expr_variable(void)
 		return;
 	}
 
+	/* The increment and decrement paths in unary_expr and
+	 * postfix_expr_inc_or_dec take the address of the operand from the
+	 * register, as they do for a local; a global or static variable leaves its
+	 * address there too (load_address_of_variable_into_register emits
+	 * GLOBAL_<name>). They were excluded here, so the value was loaded before
+	 * the operator and the operator dereferenced that value as an address:
+	 * `static int used; used++;` and `++used` segfaulted under every
+	 * architecture. */
+	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
+	int is_indexed_local_array = match("[", global_token->s) && (options & TLO_LOCAL_ARRAY);
+	int is_local_array = (options & TLO_LOCAL_ARRAY) != 0;
+	int is_function = options & TLO_FUNCTION;
 	/* The prefix operator's operand is the variable itself only when no
 	 * subscript follows: `++p[i]` indexes through p's value, so p is loaded
 	 * as for any subscript. `++*p` names the cell p points at, so it takes
 	 * the store path's loads, which leave that cell's address. */
 	int is_prefix_operand = is_prefix_operator && !match("[", global_token->s);
-	int is_postfix_operator = (match("++", global_token->s) || match("--", global_token->s)) && (options != TLO_STATIC && options != TLO_GLOBAL);
-	int is_indexed_local_array = match("[", global_token->s) && (options & TLO_LOCAL_ARRAY);
-	int is_local_array = (options & TLO_LOCAL_ARRAY) != 0;
-	int is_function = options & TLO_FUNCTION;
 
-	if((is_prefix_operand && 0 == num_dereference && options != TLO_STATIC && options != TLO_GLOBAL) || is_postfix_operator || is_indexed_local_array || is_function)
+	if((is_prefix_operand && 0 == num_dereference) || is_postfix_operator || is_indexed_local_array || is_function)
 	{
 		return;
 	}
