@@ -752,22 +752,36 @@ void emit_va_arg_intrinsic(void)
 	emit_dereference(REGISTER_ZERO, "Deref ap");
 	emit_push(REGISTER_ZERO, "Dereffed va_arg");
 
-	emit_out("# ap = ap - sizeof(ty)\n");
+	/* The argument pointer moves by the space the argument occupies, which is
+	 * one whole register-sized slot: function_call pushes each argument with a
+	 * single emit_push, whatever its declared size. Advancing by
+	 * sizeof(declared type) moved it one byte for `va_arg(ap, char)`, so the
+	 * next argument of the format was read from the wrong place:
+	 * `sprintf(buf, "[%c][%c]", 'A', 'B')` read a 0 byte and stopped. The
+	 * pointer store below had the same width, so it kept only the low byte of
+	 * the update and dropped the carry when that byte wrapped (the argument
+	 * area crosses a 0x100 boundary every 256 bytes). A type wider than a slot
+	 * is not supported here: the push side gives it one slot and there is no
+	 * test for the split, so refuse it rather than silently read one word. */
+	require(type_size->size <= register_size, "va_arg of a type wider than a register is not supported\n");
+	int slot_size = register_size;
+
+	emit_out("# ap = ap - sizeof(slot)\n");
 	load_address_of_variable_into_register(REGISTER_ZERO, ap_name);
 	emit_push(REGISTER_ZERO, "Push ap address");
 	emit_dereference(REGISTER_ZERO, "Deref ap for pointer to va_arg");
 	if(stack_direction == STACK_DIRECTION_PLUS)
 	{
-		emit_add_immediate(REGISTER_ZERO, type_size->size, "Add size of variable");
+		emit_add_immediate(REGISTER_ZERO, slot_size, "Add size of the argument slot");
 	}
 	else
 	{
-		emit_sub_immediate(REGISTER_ZERO, type_size->size, "Subtract size of variable");
+		emit_sub_immediate(REGISTER_ZERO, slot_size, "Subtract size of the argument slot");
 	}
 
 	emit_pop(REGISTER_ONE, "Pop AP address");
 	/* Store REGISTER_ZERO in REGISTER_ONE deref */
-	emit_out(store_value(type_size->size));
+	emit_out(store_value(register_size));
 
 	emit_pop(REGISTER_ZERO, "Dereffed va_arg");
 
