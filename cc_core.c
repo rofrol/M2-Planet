@@ -1197,14 +1197,17 @@ void postfix_expr_dot(void)
 	{
 		emit_add_immediate(REGISTER_ZERO, i->offset, ". offset calculation");
 	}
-	if(is_address_of) return;
-	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
-	if(match("=", global_token->s) || is_compound_assignment(global_token->s) || is_postfix_operator) return;
+	/* A subscript after the member indexes through it, so the load comes first
+	 * even under the address-of operator, which applies to the subscript's
+	 * result. */
 	if(match("[", global_token->s))
 	{
 		if(type_is_pointer(current_target)) emit_out(load_value(i->size, i->is_signed));
 		return;
 	}
+	if(is_address_of) return;
+	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
+	if(match("=", global_token->s) || is_compound_assignment(global_token->s) || is_postfix_operator) return;
 	if(match(".", global_token->s)) return;
 
 	emit_out(load_value(current_target->size, current_target->is_signed));
