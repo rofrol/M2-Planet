@@ -1094,6 +1094,10 @@ void postfix_expr_dot(void)
 
 void postfix_expr_array(void)
 {
+	/* The address-of operator, if any, applies to this element access; it is
+	 * read here because parsing the index runs primary_expr, which resets the
+	 * flag. */
+	int is_address_of = Address_of;
 	char* prefix_operator = global_token->prev->prev->s;
 
 	struct type* array = current_target;
@@ -1120,7 +1124,7 @@ void postfix_expr_array(void)
 
 	int is_prefix_operator = match("++", prefix_operator) || match("--", prefix_operator);
 	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
-	if(match("=", global_token->s) || is_compound_assignment(global_token->s) || match(".", global_token->s) || is_prefix_operator || is_postfix_operator)
+	if(is_address_of || match("=", global_token->s) || is_compound_assignment(global_token->s) || match(".", global_token->s) || is_prefix_operator || is_postfix_operator)
 	{
 		assign = "";
 	}
