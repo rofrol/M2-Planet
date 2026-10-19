@@ -840,12 +840,13 @@ void primary_expr_variable(void)
 		current_target = cast_type;
 	}
 
-	/* `&` applies to the whole postfix expression, so when a subscript follows,
-	 * the variable must still be loaded here: for a global or static array the
-	 * symbol holds the address of the storage and the subscript indexes that
-	 * storage, not the pointer cell (postfix_expr_array takes the address
-	 * itself and reports it). */
-	if(TRUE == Address_of && !match("[", global_token->s)) return;
+	/* `&` applies to the whole postfix expression, so when a subscript or an
+	 * arrow follows, the variable must still be loaded here: for a global or
+	 * static array the symbol holds the address of the storage and the
+	 * subscript indexes that storage, not the pointer cell, and `&p->x` needs
+	 * p's value, not its address. postfix_expr_array reads the pending
+	 * address-of on entry and takes the address itself. */
+	if(TRUE == Address_of && !match("[", global_token->s) && !match("->", global_token->s)) return;
 
 	int options = type->options;
 
