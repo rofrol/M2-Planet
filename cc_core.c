@@ -866,7 +866,15 @@ void primary_expr_variable(void)
 	 * architecture. */
 	int is_prefix_operator = match("++", global_token->prev->prev->s) || match("--", global_token->prev->prev->s);
 	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
-	int is_local_array = match("[", global_token->s) && (options & TLO_LOCAL_ARRAY);
+	/* A local array's storage is its slot, so its decay (the name used as a
+	 * value) is the slot's address, which load_address_of_variable_into_register
+	 * already left in the register; loading here read the array's contents as a
+	 * pointer instead, so `p = mine` faulted when p was written through and
+	 * `add(mine)` handed the callee the first eight bytes of the array (zeroed
+	 * storage became NULL). Under a subscript the array must stay unloaded too
+	 * (postfix_expr_array indexes the slot), and `*mine` still has to load the
+	 * element, hence the dereference test. */
+	int is_local_array = (options & TLO_LOCAL_ARRAY) && (0 == num_dereference);
 	int is_function = options & TLO_FUNCTION;
 
 	if(is_prefix_operator || is_postfix_operator || is_local_array || is_function)
