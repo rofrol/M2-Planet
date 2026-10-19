@@ -1102,6 +1102,7 @@ void arithmetic_recursion(FUNCTION f, char* s1, char* s2, char* name, FUNCTION i
 struct type* lookup_member(struct type* parent, char* name);
 void postfix_expr_arrow(void)
 {
+	int is_address_of = Address_of;
 	emit_out("# looking up offset\n");
 	require_extra_token();
 
@@ -1118,7 +1119,7 @@ void postfix_expr_arrow(void)
 
 	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
 	/* We don't yet support assigning structs to structs */
-	if((!match("=", global_token->s) && !is_compound_assignment(global_token->s) && !is_postfix_operator && (register_size >= i->size)))
+	if((!is_address_of && !match("=", global_token->s) && !is_compound_assignment(global_token->s) && !is_postfix_operator && (register_size >= i->size)))
 	{
 		emit_out(load_value(i->size, i->is_signed));
 	}
@@ -1175,6 +1176,7 @@ void postfix_expr_inc_or_dec(void)
 
 void postfix_expr_dot(void)
 {
+	int is_address_of = Address_of;
 	maybe_bootstrap_error("Member access using .");
 	emit_out("# looking up offset\n");
 	require_extra_token();
@@ -1187,6 +1189,7 @@ void postfix_expr_dot(void)
 	{
 		emit_add_immediate(REGISTER_ZERO, i->offset, ". offset calculation");
 	}
+	if(is_address_of) return;
 	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
 	if(match("=", global_token->s) || is_compound_assignment(global_token->s) || is_postfix_operator) return;
 	if(match("[", global_token->s) || match(".", global_token->s)) return;
@@ -1200,20 +1203,26 @@ void postfix_expr_array(void)
 	int was_address_of = Address_of;
 
 	struct type* array = current_target;
+	struct type* element = current_target;
 	common_recursion(expression);
 	current_target = array;
 	require(NULL != current_target, "Arrays only apply to variables\n");
 
+	/* The element decides both the scale and the result's type: an array symbol
+	 * gives the element type and a pointer gives the type it points at. Reading
+	 * the scale from `current_target->type` gave the pointer's size for an array
+	 * symbol and the size of the wrong level for a pointer member. */
+	if(type_is_pointer(array)) element = array->type;
+
 	char* assign = load_value(register_size, current_target->is_signed);
 
-	/* Add support for Ints */
-	if(match("char*", current_target->name))
+	if(element->size == 1)
 	{
 		assign = load_value(1, TRUE);
 	}
 	else
 	{
-		emit_mul_register_zero_with_immediate(current_target->type->size, "primary expr array");
+		emit_mul_register_zero_with_immediate(element->size, "primary expr array");
 	}
 
 	emit_add(REGISTER_ZERO, REGISTER_ONE, TRUE, "primary expr array");
@@ -1227,10 +1236,8 @@ void postfix_expr_array(void)
 	{
 		assign = "";
 	}
-	if(match("[", global_token->s))
-	{
-		current_target = current_target->type;
-	}
+	current_target = element;
+	if(match("[", global_token->s)) current_target = element->type;
 
 	emit_out(assign);
 }
