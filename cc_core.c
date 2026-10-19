@@ -1668,6 +1668,28 @@ void bitwise_expr(void)
  * is an int, whatever the operands were.
  */
 
+/*
+ * The short-circuit operators branch through REGISTER_TEMP on aarch64, where
+ * emit_unconditional_jump and emit_jump_if_zero load the label's address into
+ * it. While a function call's arguments are being evaluated that register holds
+ * the call's new base pointer (function_call copies SP into it before the
+ * argument list and derives BP and the stack cleanup from it afterwards), so a
+ * `&&` or `||` in an argument list used to make the call restore SP from a code
+ * address and fault on the next stack access. Saving the register around the
+ * whole sequence and restoring it after the join label keeps it balanced on
+ * every path: the true path jumps to the join, the false path falls into it.
+ * Other architectures branch to the label directly and need nothing.
+ */
+void keep_temp_register(char* note)
+{
+	if(AARCH64 == Architecture) emit_push(REGISTER_TEMP, note);
+}
+
+void restore_temp_register(char* note)
+{
+	if(AARCH64 == Architecture) emit_pop(REGISTER_TEMP, note);
+}
+
 void logical_and_expr_stub(void)
 {
 	char* number_string;
@@ -1679,6 +1701,7 @@ void logical_and_expr_stub(void)
 		current_count = current_count + 1;
 		unique_id = create_unique_id("", function->s, number_string);
 
+		keep_temp_register("logical and: keep the temp register");
 		emit_jump_if_zero(REGISTER_ZERO, "FALSE_AND_", unique_id, "logical and: left is zero");
 		common_recursion(bitwise_expr);
 		emit_jump_if_zero(REGISTER_ZERO, "FALSE_AND_", unique_id, "logical and: right is zero");
@@ -1687,6 +1710,7 @@ void logical_and_expr_stub(void)
 		emit_label("FALSE_AND_", unique_id);
 		emit_load_immediate(REGISTER_ZERO, 0, "logical and: false");
 		emit_label("END_AND_", unique_id);
+		restore_temp_register("logical and: restore the temp register");
 		current_target = integer;
 
 		logical_and_expr_stub();
@@ -1710,6 +1734,7 @@ void logical_or_expr_stub(void)
 		current_count = current_count + 1;
 		unique_id = create_unique_id("", function->s, number_string);
 
+		keep_temp_register("logical or: keep the temp register");
 		emit_jump_if_zero(REGISTER_ZERO, "EVAL_OR_", unique_id, "logical or: left is zero");
 		emit_load_immediate(REGISTER_ZERO, 1, "logical or: true");
 		emit_unconditional_jump("END_OR_", unique_id, "logical or: done");
@@ -1721,6 +1746,7 @@ void logical_or_expr_stub(void)
 		emit_label("FALSE_OR_", unique_id);
 		emit_load_immediate(REGISTER_ZERO, 0, "logical or: false");
 		emit_label("END_OR_", unique_id);
+		restore_temp_register("logical or: restore the temp register");
 		current_target = integer;
 
 		logical_or_expr_stub();
