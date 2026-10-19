@@ -1115,10 +1115,11 @@ void postfix_expr_array(void)
 	current_target = array;
 	require(NULL != current_target, "Arrays only apply to variables\n");
 
-	/* The element decides both the scale and the result's type: an array symbol
-	 * gives the element type and a pointer gives the type it points at. Reading
-	 * the scale from `current_target->type` gave the pointer's size for an array
-	 * symbol and the size of the wrong level for a pointer member. */
+	/* The element decides the scale: an array symbol gives the element type and
+	 * a pointer gives the type it points at. Reading it from
+	 * `current_target->type` gave the pointer's size for an array symbol and the
+	 * size of the wrong level for a pointer member. current_target stays as it
+	 * was, because the store paths rely on it. */
 	if(type_is_pointer(array)) element = array->type;
 
 	char* assign = load_value(register_size, current_target->is_signed);
@@ -1143,8 +1144,10 @@ void postfix_expr_array(void)
 	{
 		assign = "";
 	}
-	current_target = element;
-	if(match("[", global_token->s)) current_target = element->type;
+	if(match("[", global_token->s))
+	{
+		current_target = current_target->type;
+	}
 
 	emit_out(assign);
 }
