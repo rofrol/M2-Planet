@@ -1151,6 +1151,12 @@ void postfix_expr_array(void)
 	struct type* element = current_target;
 	common_recursion(expression);
 	current_target = array;
+	/* `&` applies to the whole postfix chain, and parsing the index ran
+	 * primary_expr, which resets the flag: a later operator in the chain (a
+	 * . or -> member after this subscript) must still see the pending
+	 * address-of, or it loads the member by value where its address belongs
+	 * (`&p[i].member`). */
+	Address_of = is_address_of;
 	require(NULL != current_target, "Arrays only apply to variables\n");
 
 	/* The element decides the scale: an array symbol gives the element type and
