@@ -1263,7 +1263,14 @@ void postfix_expr_array(void)
 
 	int is_prefix_operator = match("++", prefix_operator) || match("--", prefix_operator);
 	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
-	if(match("=", global_token->s) || is_compound_assignment(global_token->s) || match(".", global_token->s) || is_prefix_operator || is_postfix_operator || was_address_of)
+	/* An intermediate element that the chain goes on through ([ or ->) must
+	 * still be loaded under `&`, which applies to the last operator's result:
+	 * `&p[i]->x` needs p[i]'s value as the base of the offset. A struct or
+	 * union element is taken in place and keeps the address. (Array types
+	 * read as pointers here, so a true 2D array under `&` stays out of this
+	 * distinction; that shape is not covered.) */
+	int through_element = (match("[", global_token->s) || match("->", global_token->s)) && type_is_pointer(element);
+	if((was_address_of && !through_element) || match("=", global_token->s) || is_compound_assignment(global_token->s) || match(".", global_token->s) || is_prefix_operator || is_postfix_operator)
 	{
 		assign = "";
 	}
