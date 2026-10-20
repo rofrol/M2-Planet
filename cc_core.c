@@ -1896,7 +1896,15 @@ void primary_expr(void)
 				type_size = function_pointer;
 			}
 			require_match("Invalid character received in cast. Expected ')'.\n", ")");
-			primary_expr();
+			/* The cast applies to the whole postfix expression it precedes:
+			 * `(long)&p->items` casts `&p->items` and `(long)p->x` casts the
+			 * member's value, so the operand's postfix chain must run before the
+			 * cast type is set. Parsing only the primary left the chain running
+			 * against the cast's type: `->` and `.` failed their member lookup on
+			 * the scalar (`ERROR in lookup_member long->items does not exist`) and
+			 * a subscript scaled by the cast type's size instead of the operand's
+			 * element size. */
+			postfix_expr();
 			current_target = type_size;
 		}
 		else
