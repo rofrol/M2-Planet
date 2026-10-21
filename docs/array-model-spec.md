@@ -62,11 +62,16 @@ postfix_expr_array's element decision (`if(type_is_pointer(array)) element
       (and `a[i]++`/`--`: load AND store width) uses the same element type.
    c. `sizeof`: an array name or member is `count * element size` (the
       existing count fields); sizeof suppresses decay.
-   d. decay: **the value type of an array is a pointer to its declared
-      element type** (`T *a[N]` decays to `T **`, `int m[N]` to `int *`).
-      Pointer arithmetic (`words + i`), `&words[i]` (pointer to element),
-      call arguments and member decay (`s.arr` as a value is its address)
-      all follow from this one sentence.
+   d. decay and address-of: **the value type of an array is a pointer to
+      its declared element type** (`T *a[N]` decays to `T **`, `int m[N]`
+      to `int *`). Pointer arithmetic (`words + i`), call arguments and
+      member decay (`s.arr` as a value is its address) follow from this
+      sentence. Address-of is typed explicitly: `&a[i]` is a pointer to
+      the declared element type (`char **` for `char *words[]`) and the
+      equality `&a[i] == a + i` must hold as values; `&(member)` is a
+      pointer to the member's declared type; `&a` is a pointer to the
+      array's type. Run 7's candidate typed `&a[i]` as the decayed value's
+      type and failed the composition pin at exactly this equality.
    e. member layout (build_member): `i->size = N * member_type->size` — the
       DECLARED element type's size (today `member_type->type->size`, the
       pointee).
@@ -82,6 +87,10 @@ postfix_expr_array's element decision (`if(type_is_pointer(array)) element
    is saved/restored on the C call stack around nested parses. No size
    heuristics (`size != type->size`), no state keyed on diagnostic strings
    or token pointers, no positional or designated struct initializers.
+   Edits outside the mechanism are violations even when cosmetic:
+   whitespace churn, diagnostic-string shortening, comment rewording,
+   opcode "cleanup" in any architecture branch, and any name
+   transliteration (run 7's candidates were rejected for all of these).
 
 ## Bootstrap constraint (the previous release builds this source)
 
