@@ -618,8 +618,16 @@ int is_compound_assignment(char* token)
 
 int expression_is_array(struct token_list* symbol, struct type* member)
 {
-	if(NULL != symbol && (symbol->options & TLO_ARRAY)) return TRUE;
-	if(NULL != member && member->is_array) return TRUE;
+	/* cc_aarch64, which builds this file in the bootstrap chain, evaluates
+	 * both operands of && and ||: guard pointers with nested ifs. */
+	if(NULL != symbol)
+	{
+		if(0 != (symbol->options & TLO_ARRAY)) return TRUE;
+	}
+	if(NULL != member)
+	{
+		if(member->is_array) return TRUE;
+	}
 	return FALSE;
 }
 
@@ -971,7 +979,10 @@ struct token_list* primary_expr_variable(void)
 	 * address-of on entry and takes the address itself. */
 	if(expression_is_array(type, NULL))
 	{
-		if(!(type->options & TLO_LOCAL_ARRAY)) emit_out(load_value(register_size, FALSE));
+		/* Not `!(type->options & ...)`: the M2 that builds this file in the
+		 * chain parses `(type` as the start of a cast to struct type. */
+		int is_local_array = type->options & TLO_LOCAL_ARRAY;
+		if(0 == is_local_array) emit_out(load_value(register_size, FALSE));
 		current_target = array_pointer_type(type->type);
 		if(!match("[", global_token->s))
 		{
@@ -2116,33 +2127,38 @@ void primary_expr(void)
 			primary_expr_variable_postfix();
 		}
 	}
-	else if(global_token->s[0] == '*' && match("(", global_token->next->s))
+	else if(global_token->s[0] == '*')
 	{
-		struct token_list* operand = global_token;
-		struct token_list* inner;
-		struct type* cast_type;
-		require_extra_token();
-		require_extra_token();
-		inner = global_token;
-		cast_type = fallible_type_name();
-		if(NULL != cast_type)
+		/* No && here: cc_aarch64 would evaluate global_token->next->s for
+		 * every primary expression. */
+		if(match("(", global_token->next->s))
 		{
-			global_token = operand;
-			primary_expr_variable_postfix();
-		}
-		else
-		{
-			global_token = inner;
-			expression();
-			require_match("Error in Primary expression\nDidn't get )\n", ")");
-			current_target = current_target->type;
-			if(!match("=", global_token->s) && !is_compound_assignment(global_token->s))
+			struct token_list* operand = global_token;
+			struct token_list* inner;
+			struct type* cast_type;
+			require_extra_token();
+			require_extra_token();
+			inner = global_token;
+			cast_type = fallible_type_name();
+			if(NULL != cast_type)
 			{
-				emit_out(load_value(current_target->size, current_target->is_signed));
+				global_token = operand;
+				primary_expr_variable_postfix();
+			}
+			else
+			{
+				global_token = inner;
+				expression();
+				require_match("Error in Primary expression\nDidn't get )\n", ")");
+				current_target = current_target->type;
+				if(!match("=", global_token->s) && !is_compound_assignment(global_token->s))
+				{
+					emit_out(load_value(current_target->size, current_target->is_signed));
+				}
 			}
 		}
+		else primary_expr_variable_postfix();
 	}
-	else if(global_token->s[0] == '*') primary_expr_variable_postfix();
 	else if(in_set(global_token->s[0], "0123456789"))
 	{
 		primary_expr_number(global_token->s);
@@ -2410,7 +2426,10 @@ void expression(void)
 		if(is_array_indexed)
 		{
 			emit_push(REGISTER_ZERO, "compound operator");
-			emit_move(REGISTER_ZERO, REGISTER_ONE, "compound operator");
+			/* R0 = R1 through the stack: aarch64's defs have no
+			 * SET_X0_FROM_X1. */
+			emit_push(REGISTER_ONE, "compound operator");
+			emit_pop(REGISTER_ZERO, "compound operator");
 			emit_out(load_value(last_type->size, last_type->is_signed));
 			emit_move(REGISTER_ONE, REGISTER_ZERO, "compound operator");
 			emit_pop(REGISTER_ZERO, "compound operator");
