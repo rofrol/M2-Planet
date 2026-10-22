@@ -556,7 +556,31 @@ int is_compound_assignment(char* token)
 	return FALSE;
 }
 
-void postfix_expr_stub(void);
+int expression_is_array(struct token_list* symbol, struct type* member)
+{
+	if(NULL != symbol && (symbol->options & TLO_ARRAY)) return TRUE;
+	if(NULL != member && member->is_array) return TRUE;
+	return FALSE;
+}
+
+struct type* array_pointer_type(struct type* element)
+{
+	struct type* pointer;
+	if(element->indirect->type == element) return element->indirect;
+	pointer = calloc(1, sizeof(struct type));
+	require(NULL != pointer, "Exhausted memory while declaring array pointer type\n");
+	pointer->size = register_size;
+	pointer->is_signed = element->is_signed;
+	pointer->name = concat_strings2(element->name, "*");
+	pointer->type = element;
+	pointer->indirect = pointer;
+	pointer->next = global_types;
+	global_types = pointer;
+	element->indirect = pointer;
+	return pointer;
+}
+
+void postfix_expr_stub(struct token_list* symbol, struct type* member);
 
 /*
  * primary-expr:
@@ -797,7 +821,7 @@ void emit_va_end_intrinsic(void)
 }
 
 int num_dereference_after_postfix;
-void primary_expr_variable(void)
+struct token_list* primary_expr_variable(void)
 {
 	int num_dereference = 0;
 	while(global_token->s[0] == '*') {
@@ -822,29 +846,29 @@ void primary_expr_variable(void)
 	if(match("__va_start", s))
 	{
 		emit_va_start_intrinsic();
-		return;
+		return NULL;
 	}
 	else if(match("__va_arg", s))
 	{
 		emit_va_arg_intrinsic();
-		return;
+		return NULL;
 	}
 	else if(match("__va_end", s))
 	{
 		emit_va_end_intrinsic();
-		return;
+		return NULL;
 	}
 	else if(match("__va_copy", s))
 	{
 		emit_va_end_intrinsic();
-		return;
+		return NULL;
 	}
 
 	struct token_list* a = sym_lookup(s, global_constant_list);
 	if(NULL != a)
 	{
 		emit_load_immediate(REGISTER_ZERO, strtoint(a->arguments->s), "constant load");
-		return;
+		return NULL;
 	}
 
 	struct token_list* type = load_address_of_variable_into_register(REGISTER_ZERO, s);
@@ -860,14 +884,36 @@ void primary_expr_variable(void)
 	 * subscript indexes that storage, not the pointer cell, and `&p->x` needs
 	 * p's value, not its address. postfix_expr_array reads the pending
 	 * address-of on entry and takes the address itself. */
-	if(TRUE == Address_of && !match("[", global_token->s) && !match("->", global_token->s)) return;
+	if(expression_is_array(type, NULL))
+	{
+		if(!(type->options & TLO_LOCAL_ARRAY)) emit_out(load_value(register_size, FALSE));
+		current_target = array_pointer_type(type->type);
+		if(!match("[", global_token->s))
+		{
+			while(num_dereference > 0)
+			{
+				current_target = current_target->type;
+				if(num_dereference > 1 || (!match("=", global_token->s) && !is_compound_assignment(global_token->s)))
+				{
+					emit_out(load_value(current_target->size, current_target->is_signed));
+				}
+				num_dereference = num_dereference - 1;
+			}
+		}
+		return type;
+	}
+
+	if(TRUE == Address_of && !match("[", global_token->s) && !match("->", global_token->s) && !match(".", global_token->s))
+	{
+		current_target = array_pointer_type(current_target);
+		return type;
+	}
 
 	int options = type->options;
 
 	if(match(".", global_token->s))
 	{
-		postfix_expr_stub();
-		return;
+		return type;
 	}
 
 	/* The increment and decrement paths in unary_expr and
@@ -893,7 +939,7 @@ void primary_expr_variable(void)
 
 	if(is_prefix_operator || is_postfix_operator || is_local_array || is_function)
 	{
-		return;
+		return type;
 	}
 
 	int is_assignment = match("=", global_token->s);
@@ -908,6 +954,8 @@ void primary_expr_variable(void)
 		}
 		emit_out(load_value(size, current_target->is_signed));
 	}
+
+	if(match("[", global_token->s)) return type;
 
 	if(is_assignment)
 	{
@@ -933,6 +981,27 @@ void primary_expr_variable(void)
 				emit_out(load_value(current_target->size, current_target->is_signed));
 			}
 			num_dereference = num_dereference - 1;
+		}
+	}
+	return type;
+}
+
+void primary_expr_variable_postfix(void)
+{
+	struct token_list* symbol = primary_expr_variable();
+	int dereferences = num_dereference_after_postfix;
+	int indexed = match("[", global_token->s);
+	int is_lvalue;
+	postfix_expr_stub(symbol, NULL);
+	if(indexed && dereferences > 0)
+	{
+		is_lvalue = match("=", global_token->s) || is_compound_assignment(global_token->s);
+		while(dereferences > 0)
+		{
+			if(is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
+			current_target = current_target->type;
+			if(!is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
+			dereferences = dereferences - 1;
 		}
 	}
 }
@@ -1028,7 +1097,7 @@ void arithmetic_recursion(FUNCTION f, char* s1, char* s2, char* name, FUNCTION i
  *         postfix-expr . member
  */
 struct type* lookup_member(struct type* parent, char* name);
-void postfix_expr_arrow(void)
+struct type* postfix_expr_arrow(void)
 {
 	int is_address_of = Address_of;
 	emit_out("# looking up offset\n");
@@ -1043,14 +1112,25 @@ void postfix_expr_arrow(void)
 		emit_add_immediate(REGISTER_ZERO, i->offset, "-> offset calculation");
 	}
 
-	if(global_token->s[0] == '.') return;
+	if(expression_is_array(NULL, i))
+	{
+		current_target = array_pointer_type(i->type);
+		return i;
+	}
+	if(is_address_of && !match("[", global_token->s) && !match(".", global_token->s) && !match("->", global_token->s))
+	{
+		current_target = array_pointer_type(i->type);
+		return i;
+	}
+
+	if(global_token->s[0] == '.') return i;
 
 	/* An indexed member: a pointer member has to be loaded before the subscript
 	 * indexes through it, an array member is addressed in place. */
 	if(match("[", global_token->s))
 	{
-		if(type_is_pointer(current_target)) emit_out(load_value(i->size, i->is_signed));
-		return;
+		if(!expression_is_array(NULL, i) && type_is_pointer(current_target)) emit_out(load_value(i->size, i->is_signed));
+		return i;
 	}
 
 	/* We don't yet support assigning structs to structs */
@@ -1058,6 +1138,7 @@ void postfix_expr_arrow(void)
 	{
 		emit_out(load_value(i->size, i->is_signed));
 	}
+	return i;
 }
 
 void postfix_expr_inc_or_dec(void)
@@ -1109,7 +1190,7 @@ void postfix_expr_inc_or_dec(void)
 	emit_out("# postfix inc/dec end\n");
 }
 
-void postfix_expr_dot(void)
+struct type* postfix_expr_dot(void)
 {
 	int is_address_of = Address_of;
 	maybe_bootstrap_error("Member access using .");
@@ -1129,17 +1210,29 @@ void postfix_expr_dot(void)
 	 * result. */
 	if(match("[", global_token->s))
 	{
-		if(type_is_pointer(current_target)) emit_out(load_value(i->size, i->is_signed));
-		return;
+		if(!expression_is_array(NULL, i) && type_is_pointer(current_target)) emit_out(load_value(i->size, i->is_signed));
+		return i;
 	}
-	if(is_address_of) return;
-	if(match("=", global_token->s) || is_compound_assignment(global_token->s)) return;
-	if(match(".", global_token->s)) return;
+	if(expression_is_array(NULL, i))
+	{
+		current_target = array_pointer_type(i->type);
+		return i;
+	}
+	if(is_address_of && !match("[", global_token->s) && !match(".", global_token->s) && !match("->", global_token->s))
+	{
+		current_target = array_pointer_type(i->type);
+		return i;
+	}
+
+	if(is_address_of) return i;
+	if(match("=", global_token->s) || is_compound_assignment(global_token->s)) return i;
+	if(match(".", global_token->s)) return i;
 
 	emit_out(load_value(current_target->size, current_target->is_signed));
+	return i;
 }
 
-void postfix_expr_array(void)
+void postfix_expr_array(struct token_list* symbol, struct type* member)
 {
 	/* The address-of operator, if any, applies to this element access; it is
 	 * read here because parsing the index runs primary_expr, which resets the
@@ -1148,8 +1241,15 @@ void postfix_expr_array(void)
 	char* prefix_operator = global_token->prev->prev->s;
 
 	struct type* array = current_target;
-	struct type* element = current_target;
+	struct type* element = current_target->type;
+	int saved_dereference = num_dereference_after_postfix;
+	if(expression_is_array(symbol, member))
+	{
+		if(NULL != member) element = member->type;
+		else element = symbol->type;
+	}
 	common_recursion(expression);
+	num_dereference_after_postfix = saved_dereference;
 	current_target = array;
 	/* `&` applies to the whole postfix chain, and parsing the index ran
 	 * primary_expr, which resets the flag: a later operator in the chain (a
@@ -1164,15 +1264,11 @@ void postfix_expr_array(void)
 	 * `current_target->type` gave the pointer's size for an array symbol and the
 	 * size of the wrong level for a pointer member. current_target stays as it
 	 * was, because the store paths rely on it. */
-	if(type_is_pointer(array)) element = array->type;
+	current_target = element;
 
-	char* assign = load_value(register_size, current_target->is_signed);
+	char* assign = "";
 
-	if(element->size == 1)
-	{
-		assign = load_value(1, TRUE);
-	}
-	else
+	if(element->size != 1)
 	{
 		emit_mul_register_zero_with_immediate(element->size, "primary expr array");
 	}
@@ -1195,9 +1291,13 @@ void postfix_expr_array(void)
 	{
 		assign = "";
 	}
-	if(match("[", global_token->s))
+	else
 	{
-		current_target = current_target->type;
+		assign = load_value(element->size, element->is_signed);
+	}
+	if(is_address_of && !through_element && !match(".", global_token->s))
+	{
+		current_target = array_pointer_type(element);
 	}
 
 	emit_out(assign);
@@ -1264,15 +1364,45 @@ int unary_expr_sizeof(void)
 		require_extra_token();
 
 		struct type* a = t->type;
+		struct type* member = NULL;
+		int count = t->array_modifier;
+		int is_array = expression_is_array(t, NULL);
+		while(match(".", global_token->s) || match("->", global_token->s) || match("[", global_token->s))
+		{
+			if(match("[", global_token->s))
+			{
+				require_extra_token();
+				constant_expression();
+				require_match("ERROR in postfix_expr\nMissing ]\n", "]");
+				if(!is_array) a = a->type;
+				is_array = FALSE;
+				count = 1;
+			}
+			else
+			{
+				require_extra_token();
+				member = lookup_member(a, global_token->s);
+				a = member->type;
+				is_array = expression_is_array(NULL, member);
+				count = 1;
+				if(is_array) count = member->size / a->size;
+				require_extra_token();
+			}
+		}
+		if(is_array && num_dereferences > 0)
+		{
+			a = array_pointer_type(a);
+			count = 1;
+		}
 		while(num_dereferences > 0)
 		{
 			a = a->type;
 			num_dereferences = num_dereferences - 1;
 		}
 
-		if(t->array_modifier != 0)
+		if(count != 0)
 		{
-			size = a->size * t->array_modifier;
+			size = a->size * count;
 		}
 		else size = a->size;
 	}
@@ -1294,31 +1424,78 @@ int unary_expr_sizeof(void)
 	return size;
 }
 
-void postfix_expr_stub(void)
+void additive_expr_a(void);
+void postfix_expr_decay(void)
+{
+	struct type* pointer = current_target;
+	int saved_address_of = Address_of;
+	int saved_dereference = num_dereference_after_postfix;
+	int is_subtract;
+
+	if(Address_of) return;
+
+	/* Keep an array's decayed base and its element type together while the
+	 * offset is parsed. In particular, a literal offset has no type update
+	 * of its own and must not inherit the array's pointer type. */
+	while(match("+", global_token->s) || match("-", global_token->s))
+	{
+		is_subtract = match("-", global_token->s);
+		emit_push(REGISTER_ZERO, "array decay base");
+		require_extra_token();
+		current_target = integer;
+		additive_expr_a();
+		if(!BOOTSTRAP_MODE && !type_is_pointer(current_target) && pointer->type->size != 1)
+		{
+			emit_mul_register_zero_with_immediate(pointer->type->size, "array decay offset");
+		}
+		emit_pop(REGISTER_ONE, "array decay base");
+		if(is_subtract)
+		{
+			/* The base is in R1 and the offset in R0: R0 = R1 - R0, as the
+			 * additive operator emits it. */
+			if((KNIGHT_POSIX == Architecture) || (KNIGHT_NATIVE == Architecture)) emit_out("SUB R0 R1 R0\n");
+			else if(X86 == Architecture) emit_out("sub_ebx,eax\nmov_eax,ebx\n");
+			else if(AMD64 == Architecture) emit_out("sub_rbx,rax\nmov_rax,rbx\n");
+			else if(ARMV7L == Architecture) emit_out("'0' R0 R0 SUB R1 ARITH2_ALWAYS\n");
+			else if(AARCH64 == Architecture) emit_out("SUB_X0_X1_X0\n");
+			else if((RISCV32 == Architecture) || (RISCV64 == Architecture)) emit_out("rd_a0 rs1_a1 rs2_a0 sub\n");
+		}
+		else emit_add(REGISTER_ZERO, REGISTER_ONE, "array decay offset");
+		current_target = pointer;
+		Address_of = saved_address_of;
+		num_dereference_after_postfix = saved_dereference;
+	}
+}
+
+void postfix_expr_stub(struct token_list* symbol, struct type* member)
 {
 	require(NULL != global_token, "Unexpected EOF, improperly terminated primary expression\n");
 	if(match("[", global_token->s))
 	{
-		postfix_expr_array();
-		postfix_expr_stub();
+		postfix_expr_array(symbol, member);
+		postfix_expr_stub(NULL, NULL);
+		return;
 	}
 
 	if(match("->", global_token->s))
 	{
-		postfix_expr_arrow();
-		postfix_expr_stub();
+		member = postfix_expr_arrow();
+		postfix_expr_stub(NULL, member);
+		return;
 	}
 
 	if(match(".", global_token->s))
 	{
-		postfix_expr_dot();
-		postfix_expr_stub();
+		member = postfix_expr_dot();
+		postfix_expr_stub(NULL, member);
+		return;
 	}
 
 	if(match("++", global_token->s) || match("--", global_token->s))
 	{
 		postfix_expr_inc_or_dec();
-		postfix_expr_stub();
+		postfix_expr_stub(NULL, NULL);
+		return;
 	}
 
 	if(global_token->s[0] == '(')
@@ -1334,12 +1511,16 @@ void postfix_expr_stub(void)
 			exit(EXIT_FAILURE);
 		}
 	}
+	if(expression_is_array(symbol, member) && num_dereference_after_postfix == 0)
+	{
+		postfix_expr_decay();
+	}
 }
 
 void postfix_expr(void)
 {
 	primary_expr();
-	postfix_expr_stub();
+	postfix_expr_stub(NULL, NULL);
 }
 
 /*
@@ -1863,10 +2044,36 @@ void primary_expr(void)
 		}
 		else
 		{
-			primary_expr_variable();
+			primary_expr_variable_postfix();
 		}
 	}
-	else if(global_token->s[0] == '*') primary_expr_variable();
+	else if(global_token->s[0] == '*' && match("(", global_token->next->s))
+	{
+		struct token_list* operand = global_token;
+		struct token_list* inner;
+		struct type* cast_type;
+		require_extra_token();
+		require_extra_token();
+		inner = global_token;
+		cast_type = fallible_type_name();
+		if(NULL != cast_type)
+		{
+			global_token = operand;
+			primary_expr_variable_postfix();
+		}
+		else
+		{
+			global_token = inner;
+			expression();
+			require_match("Error in Primary expression\nDidn't get )\n", ")");
+			current_target = current_target->type;
+			if(!match("=", global_token->s) && !is_compound_assignment(global_token->s))
+			{
+				emit_out(load_value(current_target->size, current_target->is_signed));
+			}
+		}
+	}
+	else if(global_token->s[0] == '*') primary_expr_variable_postfix();
 	else if(in_set(global_token->s[0], "0123456789"))
 	{
 		primary_expr_number(global_token->s);
@@ -2087,7 +2294,7 @@ void expression(void)
 		char* store = "";
 		if(match("]", global_token->prev->s))
 		{
-			store = store_value(current_target->type->size);
+			store = store_value(current_target->size);
 		}
 		else
 		{
@@ -2107,7 +2314,7 @@ void expression(void)
 		struct type* last_type = current_target;
 		int is_array_indexed = match("]", global_token->prev->s);
 
-		if(!is_array_indexed || !match("char*", current_target->name))
+		if(!is_array_indexed || current_target->size != 1)
 		{
 			if((KNIGHT_POSIX == Architecture) || (KNIGHT_NATIVE == Architecture)) load = "LOAD R1 R1 0\n";
 			else if(X86 == Architecture) load = "mov_ebx,[ebx]\n";
@@ -2131,23 +2338,32 @@ void expression(void)
 
 		if(is_array_indexed)
 		{
-			store = store_value(current_target->type->size);
+			store = store_value(current_target->size);
 		}
 		else
 		{
 			store = store_value(current_target->size);
 		}
 
-		int should_apply_pointer_arithmetic = type_is_pointer(current_target) && !is_array_indexed;
+		int should_apply_pointer_arithmetic = type_is_pointer(current_target);
 		/* We need this before it's changed by the following expression  */
 		int object_size = current_target->type->size;
 
 		common_recursion(expression);
 		current_target = promote_type(current_target, last_type);
 		emit_push(REGISTER_ONE, "compound operator");
-		emit_out(load);
+		if(is_array_indexed)
+		{
+			emit_push(REGISTER_ZERO, "compound operator");
+			emit_move(REGISTER_ZERO, REGISTER_ONE, "compound operator");
+			emit_out(load_value(last_type->size, last_type->is_signed));
+			emit_move(REGISTER_ONE, REGISTER_ZERO, "compound operator");
+			emit_pop(REGISTER_ZERO, "compound operator");
+		}
+		else emit_out(load);
 
 		if(should_apply_pointer_arithmetic) {
+			current_target = last_type;
 			multiply_by_object_size(object_size);
 		}
 
@@ -2265,7 +2481,7 @@ void collect_local(void)
 		{
 			maybe_bootstrap_error("array on the stack");
 
-			a->options = a->options | TLO_LOCAL_ARRAY;
+			a->options = a->options | TLO_LOCAL_ARRAY | TLO_ARRAY;
 
 			require_extra_token();
 
@@ -2993,7 +3209,7 @@ void collect_arguments(void)
 				}
 
 				require_match("Invalid token received in argument array, expected ']'.\n", "]");
-				a->type = a->type->indirect;
+				a->type = array_pointer_type(a->type);
 			}
 		}
 
@@ -3493,6 +3709,7 @@ int global_static_array(struct type* type_size, char* name)
 
 void declare_global_variable(struct type* type_size, struct token_list* variable)
 {
+	if(match("[", global_token->s)) variable->options = variable->options | TLO_ARRAY;
 	variable->array_modifier = global_static_array(type_size, variable->s);
 }
 

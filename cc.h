@@ -105,6 +105,7 @@ struct type
 	int size;
 	int offset;
 	int is_signed;
+	int is_array;
 	/* Dereferenced type */
 	struct type* indirect;
 	struct type* members;
@@ -125,6 +126,7 @@ enum
 	TLO_LOCAL = 16,
 	TLO_FUNCTION = 32,
 	TLO_CONSTANT = 64,
+	TLO_ARRAY = 128,
 };
 
 struct token_list

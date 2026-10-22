@@ -548,7 +548,8 @@ struct type* build_member(struct type* last, int offset)
 	if(match( "[", global_token->s))
 	{
 		require_extra_token();
-		i->size = constant_expression() * member_type->type->size;
+		i->is_array = TRUE;
+		i->size = constant_expression() * member_type->size;
 		if(0 == i->size)
 		{
 			fputs("Struct only supports [num] form\n", stderr);
