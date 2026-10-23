@@ -989,7 +989,7 @@ struct token_list* primary_expr_variable(void)
 			while(num_dereference > 0)
 			{
 				current_target = current_target->type;
-				if(num_dereference > 1 || (!match("=", global_token->s) && !is_compound_assignment(global_token->s)))
+				if(num_dereference > 1 || (!is_prefix_operator && !match("=", global_token->s) && !is_compound_assignment(global_token->s)))
 				{
 					emit_out(load_value(current_target->size, current_target->is_signed));
 				}
