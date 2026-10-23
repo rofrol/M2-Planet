@@ -914,6 +914,36 @@ void emit_va_end_intrinsic(void)
 int num_dereference_after_postfix;
 /* Set while an arrow chain is the operand of a prefix ++ or --. */
 int prefix_member_operand;
+/* The `)` that closes a parenthesized operand of a postfix ++ or --, NULL
+ * otherwise. Inside `(*p)++` the token after the operand is that `)`, not the
+ * operator, so the last dereference loaded the cell and the operator used its
+ * value as an address. A dereference that sees this `)` as its next token
+ * leaves the cell's address, as it does before `=`. */
+struct token_list* postfix_operand_close;
+
+int closes_postfix_operand(void)
+{
+	if(global_token == postfix_operand_close) return TRUE;
+	return FALSE;
+}
+
+/* The `)` matching an already consumed `(`, searched from t on. */
+struct token_list* matching_close_paren(struct token_list* t)
+{
+	int depth = 1;
+	while(NULL != t)
+	{
+		if(match("(", t->s)) depth = depth + 1;
+		else if(match(")", t->s))
+		{
+			depth = depth - 1;
+			if(0 == depth) return t;
+		}
+		t = t->next;
+	}
+	return NULL;
+}
+
 struct token_list* primary_expr_variable(void)
 {
 	/* A prefix ++ or -- stands ahead of the operand's `*`s. */
@@ -1040,7 +1070,9 @@ struct token_list* primary_expr_variable(void)
 		return type;
 	}
 
-	int is_assignment = match("=", global_token->s) || (is_prefix_operand && 0 != num_dereference);
+	/* `(*p)++` takes the store path too: the operand ends at the `)` before
+	 * the operator. */
+	int is_assignment = match("=", global_token->s) || (is_prefix_operand && 0 != num_dereference) || closes_postfix_operand();
 	int is_compound_operator = is_compound_assignment(global_token->s);
 
 	if(!is_assignment && !is_compound_operator && !is_local_array)
@@ -1098,6 +1130,7 @@ void primary_expr_variable_postfix(void)
 	int indexed = match("[", global_token->s);
 	int is_member = match(".", global_token->s) || match("->", global_token->s);
 	int is_lvalue;
+	int names_cell;
 	/* `++q->x`: the arrow chain leaves the last member's address for the
 	 * operator. */
 	prefix_member_operand = is_prefix_operator && 0 == dereferences && match("->", global_token->s);
@@ -1105,17 +1138,19 @@ void primary_expr_variable_postfix(void)
 	/* `*s.p` and `*q->p` dereference the member's value: primary_expr_variable
 	 * left the `*`s for after the member access. A postfix ++ or -- has applied
 	 * them already and cleared the count. The member access loads the pointer
-	 * unless an assignment follows; under a prefix ++ or -- the last `*` leaves
-	 * the cell's address for the operator. */
+	 * unless an assignment follows; under a prefix ++ or --, or a postfix one
+	 * after the closing `)` of `(*s.p)++`, the last `*` leaves the cell's
+	 * address for the operator. */
 	if(is_member)
 	{
 		dereferences = num_dereference_after_postfix;
 		is_lvalue = match("=", global_token->s) || is_compound_assignment(global_token->s);
+		names_cell = is_prefix_operator || closes_postfix_operand();
 		while(dereferences > 0)
 		{
 			if(is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
 			current_target = current_target->type;
-			if(is_prefix_operator && 1 == dereferences) is_lvalue = TRUE;
+			if(names_cell && 1 == dereferences) is_lvalue = TRUE;
 			if(0 == is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
 			dereferences = dereferences - 1;
 		}
@@ -2153,8 +2188,24 @@ void primary_expr(void)
 		}
 		else
 		{
+			/* `(*p)++` and `((*p))++`: the operand's last dereference leaves
+			 * the cell's address for the postfix operator, and its `*`s have
+			 * all been applied inside the parentheses. */
+			struct token_list* close = matching_close_paren(global_token);
+			struct token_list* outer_close = postfix_operand_close;
+			int names_cell = FALSE;
+			if(NULL != close)
+			{
+				if(NULL != close->next)
+				{
+					names_cell = match("++", close->next->s) || match("--", close->next->s) || close->next == outer_close;
+				}
+			}
+			if(names_cell) postfix_operand_close = close;
 			expression();
 			require_match("Error in Primary expression\nDidn't get )\n", ")");
+			if(names_cell) num_dereference_after_postfix = 0;
+			postfix_operand_close = outer_close;
 		}
 	}
 	else if(global_token->s[0] == '\'') primary_expr_char();
@@ -2197,7 +2248,7 @@ void primary_expr(void)
 				expression();
 				require_match("Error in Primary expression\nDidn't get )\n", ")");
 				current_target = current_target->type;
-				if(!match("=", global_token->s) && !is_compound_assignment(global_token->s))
+				if(!match("=", global_token->s) && !is_compound_assignment(global_token->s) && !closes_postfix_operand())
 				{
 					emit_out(load_value(current_target->size, current_target->is_signed));
 				}
