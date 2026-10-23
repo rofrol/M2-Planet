@@ -912,6 +912,8 @@ void emit_va_end_intrinsic(void)
 }
 
 int num_dereference_after_postfix;
+/* Set while an arrow chain is the operand of a prefix ++ or --. */
+int prefix_member_operand;
 struct token_list* primary_expr_variable(void)
 {
 	/* A prefix ++ or -- stands ahead of the operand's `*`s. */
@@ -1029,8 +1031,9 @@ struct token_list* primary_expr_variable(void)
 	 * as for any subscript. `++*p` names the cell p points at, so it takes
 	 * the store path's loads, which leave that cell's address. */
 	int is_prefix_operand = is_prefix_operator && !match("[", global_token->s);
-	/* `++*q->p` names the cell q->p points at: q is loaded for the arrow. */
-	if(0 != num_dereference && match("->", global_token->s)) is_prefix_operand = FALSE;
+	/* `++q->x` and `++*q->p` name a cell reached through q's value: q is
+	 * loaded for the arrow. */
+	if(match("->", global_token->s)) is_prefix_operand = FALSE;
 
 	if((is_prefix_operand && 0 == num_dereference) || is_postfix_operator || is_indexed_local_array || is_function)
 	{
@@ -1095,6 +1098,9 @@ void primary_expr_variable_postfix(void)
 	int indexed = match("[", global_token->s);
 	int is_member = match(".", global_token->s) || match("->", global_token->s);
 	int is_lvalue;
+	/* `++q->x`: the arrow chain leaves the last member's address for the
+	 * operator. */
+	prefix_member_operand = is_prefix_operator && 0 == dereferences && match("->", global_token->s);
 	postfix_expr_stub(symbol, NULL);
 	/* `*s.p` and `*q->p` dereference the member's value: primary_expr_variable
 	 * left the `*`s for after the member access. A postfix ++ or -- has applied
@@ -1223,6 +1229,8 @@ struct type* lookup_member(struct type* parent, char* name);
 struct type* postfix_expr_arrow(void)
 {
 	int is_address_of = Address_of;
+	int is_prefix_operand = prefix_member_operand;
+	prefix_member_operand = FALSE;
 	emit_out("# looking up offset\n");
 	require_extra_token();
 
@@ -1233,6 +1241,18 @@ struct type* postfix_expr_arrow(void)
 	if(0 != i->offset)
 	{
 		emit_add_immediate(REGISTER_ZERO, i->offset, "-> offset calculation");
+	}
+
+	/* Under a prefix ++ or -- the chain's last member is the operand: its
+	 * address stays for the operator, while a member the next arrow goes
+	 * through is loaded as usual. */
+	if(is_prefix_operand)
+	{
+		if(match("->", global_token->s)) prefix_member_operand = TRUE;
+		else if(global_token->s[0] != '.' && !match("[", global_token->s))
+		{
+			if(!expression_is_array(NULL, i)) return i;
+		}
 	}
 
 	if(expression_is_array(NULL, i))

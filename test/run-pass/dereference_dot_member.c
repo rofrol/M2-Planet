@@ -15,11 +15,152 @@
  * along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* *s.p and *q->p dereference the pointer the member holds. */
+/* *s.p and *q->p dereference the pointer the member holds; ++q->x and
+ * --q->x change the member q points at. */
 enum E { E0 = 0, E1 = 1 };
 typedef enum E E_t;
 struct ce_t { enum E a; E_t b; int c; };
 struct cep_t { enum E* a; E_t* b; int* c; };
+struct n_t { int x; };
+struct s_t { int* p; int** pp; int* a[2]; int x; struct n_t* n; };
+struct s_t gs;
+struct s_t* gq;
+
+int id(int v)
+{
+	return v;
+}
+
+/* The shapes on a local struct. */
+int dot_local(void)
+{
+	struct s_t s;
+	int c;
+	int d;
+	int e;
+	int* t;
+	c = 5;
+	d = 6;
+	e = 7;
+	t = &d;
+	s.p = &c;
+	s.pp = &t;
+	s.a[0] = &d;
+	s.a[1] = &e;
+	s.x = 3;
+	if(*s.p != 5) return 71;
+	*s.p = 9;
+	if(c != 9) return 72;
+	*s.p += 2;
+	if(c != 11) return 73;
+	++*s.p;
+	if(c != 12) return 74;
+	(*s.p)++;
+	if(c != 13) return 75;
+	if(**s.pp != 6) return 76;
+	**s.pp = 8;
+	if(d != 8) return 77;
+	if(&*s.p != s.p) return 78;
+	if(sizeof(*s.p) != sizeof(int)) return 79;
+	if(id(*s.p) != 13) return 80;
+	if(!(*s.p && *s.p == 13)) return 81;
+	if(*s.a[1] != 7) return 82;
+	*s.a[1] = 4;
+	if(e != 4) return 83;
+	if(*(s.p) != 13) return 84;
+	return 0;
+}
+
+/* The same shapes on a global struct. */
+int dot_global(void)
+{
+	int c;
+	int d;
+	int e;
+	int* t;
+	c = 5;
+	d = 6;
+	e = 7;
+	t = &d;
+	gs.p = &c;
+	gs.pp = &t;
+	gs.a[0] = &d;
+	gs.a[1] = &e;
+	gs.x = 3;
+	if(*gs.p != 5) return 91;
+	*gs.p = 9;
+	if(c != 9) return 92;
+	*gs.p += 2;
+	if(c != 11) return 93;
+	++*gs.p;
+	if(c != 12) return 94;
+	(*gs.p)++;
+	if(c != 13) return 95;
+	if(**gs.pp != 6) return 96;
+	**gs.pp = 8;
+	if(d != 8) return 97;
+	if(&*gs.p != gs.p) return 98;
+	if(sizeof(*gs.p) != sizeof(int)) return 99;
+	if(id(*gs.p) != 13) return 100;
+	if(!(*gs.p && *gs.p == 13)) return 101;
+	if(*gs.a[1] != 7) return 102;
+	*gs.a[1] = 4;
+	if(e != 4) return 103;
+	if(*(gs.p) != 13) return 104;
+	return 0;
+}
+
+/* The shapes through -> of a parameter, and ++ and -- on its members. */
+int arrow_param(struct s_t* q, int* c, int* d)
+{
+	if(*q->p != 5) return 111;
+	*q->p = 9;
+	if(*c != 9) return 112;
+	*q->p += 2;
+	if(*c != 11) return 113;
+	++*q->p;
+	if(*c != 12) return 114;
+	(*q->p)++;
+	if(*c != 13) return 115;
+	if(**q->pp != 6) return 116;
+	**q->pp = 8;
+	if(*d != 8) return 117;
+	if(&*q->p != q->p) return 118;
+	if(id(*q->p) != 13) return 119;
+	if(*q->a[1] != 7) return 120;
+	if(q->n->x != 21) return 121;
+	++q->x;
+	if(q->x != 4) return 122;
+	--q->x;
+	if(q->x != 3) return 123;
+	q->x++;
+	if(q->x != 4) return 124;
+	++q->n->x;
+	if(q->n->x != 22) return 125;
+	--q->n->x;
+	if(q->n->x != 21) return 126;
+	if(++q->x != 5) return 127;
+	if(--q->x != 4) return 128;
+	return 0;
+}
+
+/* ++ and -- through a global pointer. */
+int arrow_global(void)
+{
+	struct n_t n;
+	n.x = 31;
+	gs.x = 13;
+	gs.n = &n;
+	gq = &gs;
+	++gq->x;
+	if(gs.x != 14) return 131;
+	--gq->x;
+	if(gs.x != 13) return 132;
+	++gq->n->x;
+	if(n.x != 32) return 133;
+	return 0;
+}
+
 int main(void)
 {
 	struct ce_t ce;
@@ -27,6 +168,13 @@ int main(void)
 	struct cep_t* pp;
 	enum E* q;
 	int* r;
+	struct s_t s;
+	struct n_t n;
+	int c;
+	int d;
+	int e;
+	int* t;
+	int rc;
 	ce.a = 7;
 	ce.b = 9;
 	ce.c = 11;
@@ -66,5 +214,27 @@ int main(void)
 	if(ce.b != 13) return 61;
 	*cep.c += 2;
 	if(ce.c != 14) return 62;
+
+	rc = dot_local();
+	if(0 != rc) return rc;
+	rc = dot_global();
+	if(0 != rc) return rc;
+	c = 5;
+	d = 6;
+	e = 7;
+	t = &d;
+	n.x = 21;
+	s.p = &c;
+	s.pp = &t;
+	s.a[0] = &d;
+	s.a[1] = &e;
+	s.x = 3;
+	s.n = &n;
+	rc = arrow_param(&s, &c, &d);
+	if(0 != rc) return rc;
+	if(s.x != 4) return 129;
+	if(n.x != 21) return 130;
+	rc = arrow_global();
+	if(0 != rc) return rc;
 	return 0;
 }
