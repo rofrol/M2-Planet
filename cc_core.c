@@ -1329,7 +1329,10 @@ void postfix_expr_inc_or_dec(void)
 	emit_push(REGISTER_ONE, "Old register one value");
 
 	emit_push(REGISTER_ZERO, "Address of variable");
-	emit_dereference(REGISTER_ZERO, "Get value");
+	/* Load the cell at its own width, as the store below writes it: a full
+	 * register load of a char cell takes its neighbours into the old value
+	 * that `(*(p + 1))++` yields. */
+	emit_out(load_value(current_target->size, current_target->is_signed));
 
 	/* We need the address to be at the top of the stack and the value to be below it */
 	emit_pop(REGISTER_ONE, "Address of variable");
