@@ -914,6 +914,8 @@ void emit_va_end_intrinsic(void)
 int num_dereference_after_postfix;
 struct token_list* primary_expr_variable(void)
 {
+	/* A prefix ++ or -- stands ahead of the operand's `*`s. */
+	int is_prefix_operator = match("++", global_token->prev->s) || match("--", global_token->prev->s);
 	int num_dereference = 0;
 	while(global_token->s[0] == '*') {
 		require_extra_token();
@@ -987,7 +989,7 @@ struct token_list* primary_expr_variable(void)
 			while(num_dereference > 0)
 			{
 				current_target = current_target->type;
-				if(num_dereference > 1 || (!match("=", global_token->s) && !is_compound_assignment(global_token->s)))
+				if(num_dereference > 1 || (!is_prefix_operator && !match("=", global_token->s) && !is_compound_assignment(global_token->s)))
 				{
 					emit_out(load_value(current_target->size, current_target->is_signed));
 				}
@@ -1018,18 +1020,22 @@ struct token_list* primary_expr_variable(void)
 	 * the operator and the operator dereferenced that value as an address:
 	 * `static int used; used++;` and `++used` segfaulted under every
 	 * architecture. */
-	int is_prefix_operator = match("++", global_token->prev->prev->s) || match("--", global_token->prev->prev->s);
 	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
 	int is_indexed_local_array = match("[", global_token->s) && (options & TLO_LOCAL_ARRAY);
 	int is_local_array = (options & TLO_LOCAL_ARRAY) != 0;
 	int is_function = options & TLO_FUNCTION;
+	/* The prefix operator's operand is the variable itself only when no
+	 * subscript follows: `++p[i]` indexes through p's value, so p is loaded
+	 * as for any subscript. `++*p` names the cell p points at, so it takes
+	 * the store path's loads, which leave that cell's address. */
+	int is_prefix_operand = is_prefix_operator && !match("[", global_token->s);
 
-	if(is_prefix_operator || is_postfix_operator || is_indexed_local_array || is_function)
+	if((is_prefix_operand && 0 == num_dereference) || is_postfix_operator || is_indexed_local_array || is_function)
 	{
 		return type;
 	}
 
-	int is_assignment = match("=", global_token->s);
+	int is_assignment = match("=", global_token->s) || is_prefix_operand;
 	int is_compound_operator = is_compound_assignment(global_token->s);
 
 	if(!is_assignment && !is_compound_operator && !is_local_array)
