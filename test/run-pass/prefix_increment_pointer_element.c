@@ -15,8 +15,6 @@
  * along with M2-Planet.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdlib.h>
-
 /* `++` and `--` on an element a pointer subscript names must change that
  * element: the compiler used to skip loading the pointer before the subscript
  * under a prefix operator, so it indexed from the pointer variable's own
@@ -24,7 +22,8 @@
  * operator ahead of a `*`, so `++*p` loaded *p and incremented the cell that
  * value addressed. The array subscript and the postfix forms are the
  * controls. Neighbouring elements are set so a store to the wrong element
- * shows. Any nonzero exit is a failure. */
+ * shows. The pointers point at zeroed static storage, so no header or libc
+ * call is needed. Any nonzero exit is a failure. */
 struct rule { int pad; int nt; };
 
 static struct rule* rule_at(struct rule* rules, int i)
@@ -32,13 +31,15 @@ static struct rule* rule_at(struct rule* rules, int i)
 	return rules + i;
 }
 
+static int count_store[4];
+static struct rule rule_store[2];
 int* global_counts;
 
 int main(void)
 {
-	int* counts = calloc(4, sizeof(int));
+	int* counts = count_store;
 	int array[4];
-	struct rule* rules = calloc(2, sizeof(struct rule));
+	struct rule* rules = rule_store;
 	int x;
 	int i;
 
