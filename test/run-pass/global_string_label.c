@@ -31,6 +31,6 @@ int main()
 	if('a' != quoted[0]) return 4;
 	if('"' != quoted[2]) return 5;
 	if('s' != other[0]) return 6;
-	if('d' != other[12]) return 7;
+	if('g' != other[12]) return 7;
 	return 0;
 }
