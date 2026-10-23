@@ -1029,6 +1029,8 @@ struct token_list* primary_expr_variable(void)
 	 * as for any subscript. `++*p` names the cell p points at, so it takes
 	 * the store path's loads, which leave that cell's address. */
 	int is_prefix_operand = is_prefix_operator && !match("[", global_token->s);
+	/* `++*q->p` names the cell q->p points at: q is loaded for the arrow. */
+	if(0 != num_dereference && match("->", global_token->s)) is_prefix_operand = FALSE;
 
 	if((is_prefix_operand && 0 == num_dereference) || is_postfix_operator || is_indexed_local_array || is_function)
 	{
@@ -1048,7 +1050,9 @@ struct token_list* primary_expr_variable(void)
 		emit_out(load_value(size, current_target->is_signed));
 	}
 
-	if(match("[", global_token->s)) return type;
+	/* `*q->p` is `*(q->p)`: the `*`s apply after the member access, in
+	 * primary_expr_variable_postfix, as they do after a subscript. */
+	if(match("[", global_token->s) || match("->", global_token->s)) return type;
 
 	if(is_assignment)
 	{
@@ -1085,11 +1089,33 @@ struct token_list* primary_expr_variable(void)
 
 void primary_expr_variable_postfix(void)
 {
+	int is_prefix_operator = match("++", global_token->prev->s) || match("--", global_token->prev->s);
 	struct token_list* symbol = primary_expr_variable();
 	int dereferences = num_dereference_after_postfix;
 	int indexed = match("[", global_token->s);
+	int is_member = match(".", global_token->s) || match("->", global_token->s);
 	int is_lvalue;
 	postfix_expr_stub(symbol, NULL);
+	/* `*s.p` and `*q->p` dereference the member's value: primary_expr_variable
+	 * left the `*`s for after the member access. A postfix ++ or -- has applied
+	 * them already and cleared the count. The member access loads the pointer
+	 * unless an assignment follows; under a prefix ++ or -- the last `*` leaves
+	 * the cell's address for the operator. */
+	if(is_member)
+	{
+		dereferences = num_dereference_after_postfix;
+		is_lvalue = match("=", global_token->s) || is_compound_assignment(global_token->s);
+		while(dereferences > 0)
+		{
+			if(is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
+			current_target = current_target->type;
+			if(is_prefix_operator && 1 == dereferences) is_lvalue = TRUE;
+			if(0 == is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
+			dereferences = dereferences - 1;
+		}
+		num_dereference_after_postfix = 0;
+		return;
+	}
 	if(indexed && dereferences > 0)
 	{
 		is_lvalue = match("=", global_token->s) || is_compound_assignment(global_token->s);
