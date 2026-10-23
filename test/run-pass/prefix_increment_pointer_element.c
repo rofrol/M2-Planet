@@ -22,26 +22,50 @@
  * operator ahead of a `*`, so `++*p` loaded *p and incremented the cell that
  * value addressed. The array subscript and the postfix forms are the
  * controls. Neighbouring elements are set so a store to the wrong element
- * shows. The pointers point at zeroed static storage, so no header or libc
- * call is needed. Any nonzero exit is a failure. */
+ * shows. The pointers point at zeroed static storage, returned from functions
+ * so their values are known only at run time, as with calloc; no header or
+ * libc call is needed. The stack array and the globals around the global
+ * pointer hold nonzero sentinels, so a store or load that strays into them
+ * shows. Any nonzero exit is a failure. */
 struct rule { int pad; int nt; };
 
+/* `&rules[i]` rather than `rules + i`: M2-Planet adds a pointer and an int
+ * without scaling by the pointee's size, which is not this case's subject. */
 static struct rule* rule_at(struct rule* rules, int i)
 {
-	return rules + i;
+	return &rules[i];
 }
 
 static int count_store[4];
 static struct rule rule_store[2];
+int guard_before;
 int* global_counts;
+int guard_after;
+
+static int* count_cells(void)
+{
+	return count_store;
+}
+
+static struct rule* rule_cells(void)
+{
+	return rule_store;
+}
 
 int main(void)
 {
-	int* counts = count_store;
+	int* counts = count_cells();
 	int array[4];
-	struct rule* rules = rule_store;
+	struct rule* rules = rule_cells();
 	int x;
 	int i;
+
+	array[0] = 101;
+	array[1] = 102;
+	array[2] = 103;
+	array[3] = 104;
+	guard_before = 201;
+	guard_after = 202;
 
 	counts[0] = 7;
 	counts[2] = 9;
@@ -104,6 +128,21 @@ int main(void)
 	if(x != 4) return 25;
 	if(counts[0] != 4) return 26;
 	if(counts[1] != 1) return 27;
+
+	/* Through a dereference of the global pointer. */
+	x = ++*global_counts;
+	if(x != 5) return 28;
+	if(counts[0] != 5) return 29;
+	x = --*global_counts;
+	if(x != 4) return 30;
+	if(counts[0] != 4) return 31;
+	if(counts[1] != 1) return 32;
+
+	/* The sentinels nothing above should have touched. */
+	if(array[3] != 104) return 33;
+	if(guard_before != 201) return 34;
+	if(guard_after != 202) return 35;
+	if(global_counts != counts) return 36;
 
 	return 0;
 }
