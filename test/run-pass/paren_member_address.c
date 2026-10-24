@@ -22,7 +22,11 @@
  * &(*(p)).b, &(*p).b and &(s).b take the member's address, as &p->b does.
  * The `&` applies to the chain after the `)`, but the operand's own primary
  * expression cleared it: the member was loaded by value, and before that
- * &(*(p)).b failed to compile because the dereference loaded the struct. */
+ * &(*(p)).b failed to compile because the dereference loaded the struct.
+ *
+ * &((*p).b) and &((s).b) take it through the parentheses around the chain.
+ * Those parentheses end the operand, but the `&` stayed outside them and the
+ * member was loaded by value. */
 struct f_t { int* (*fp)(int); };
 struct m_t { int a; int b; };
 
@@ -80,12 +84,37 @@ int paren_member_address(void)
 	return 0;
 }
 
+/* &((*p).b), &((s).b) and &((s).a): the parentheses around the member chain
+ * end the operand, so the `&` applies to the member they enclose. */
+int nested_paren_member_address(void)
+{
+	struct m_t s;
+	struct m_t* p;
+	int* q;
+	s.a = 1;
+	s.b = 2;
+	p = &s;
+	q = &((*p).b);
+	if(q != &s.b) return 21;
+	*q = 7;
+	if(s.b != 7) return 22;
+	if(s.a != 1) return 23;
+	q = &((s).b);
+	if(q != &s.b) return 24;
+	q = &((s).a);
+	if(q != &s.a) return 25;
+	if(p != &s) return 26;
+	return 0;
+}
+
 int main(void)
 {
 	int rc;
 	rc = deref_member_call();
 	if(0 != rc) return rc;
 	rc = paren_member_address();
+	if(0 != rc) return rc;
+	rc = nested_paren_member_address();
 	if(0 != rc) return rc;
 	return 0;
 }

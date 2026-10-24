@@ -2278,7 +2278,10 @@ void primary_expr(void)
 				if(NULL != close->next)
 				{
 					chain_follows = continues_postfix_chain(close->next->s);
-					if(after_prefix_operator) names_cell = !chain_follows;
+					/* A pending `&` takes the cell's address as a prefix
+					 * operator does: `&((*p).y)` and `&((s).y)` hand it to the
+					 * member that ends the operand, as `++((*p).x)` does. */
+					if(after_prefix_operator || was_address_of) names_cell = !chain_follows;
 					names_cell = names_cell || match(".", close->next->s) || match("++", close->next->s) || match("--", close->next->s) || match("=", close->next->s) || is_compound_assignment(close->next->s) || close->next == outer_close;
 				}
 			}
