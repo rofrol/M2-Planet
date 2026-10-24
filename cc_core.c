@@ -1742,7 +1742,11 @@ void postfix_expr_stub(struct token_list* symbol, struct type* member)
 	{
 		if((current_target->options & TO_FUNCTION_POINTER))
 		{
+			/* The arguments are expressions of their own, as a subscript's
+			 * index is: `*s.fp(i)` still dereferences the call's result. */
+			int saved_dereference = num_dereference_after_postfix;
 			function_call(NULL, TRUE);
+			num_dereference_after_postfix = saved_dereference;
 		}
 		else
 		{
@@ -2261,9 +2265,12 @@ void primary_expr(void)
 			 * stands before the `(`, so the operand's own tokens cannot see
 			 * it; when a chain goes on after the `)`, as in `++(*pp)[0]`, the
 			 * chain's last step is the operand instead. A member access after
-			 * the `)` addresses the struct in place: `(*p).x` and `(s).x`. */
+			 * the `)` addresses the struct in place: `(*p).x` and `(s).x`. The
+			 * operand's own primary expression clears a pending `&`, which
+			 * applies to the chain after the `)`: `&(*p).b` is `&p->b`. */
 			struct token_list* close = matching_close_paren(global_token);
 			struct token_list* outer_close = postfix_operand_close;
+			int was_address_of = Address_of;
 			int names_cell = FALSE;
 			int chain_follows = FALSE;
 			if(NULL != close)
@@ -2278,7 +2285,15 @@ void primary_expr(void)
 			if(names_cell) postfix_operand_close = close;
 			expression();
 			require_match("Error in Primary expression\nDidn't get )\n", ")");
-			num_dereference_after_postfix = 0;
+			/* The `*`s inside a parenthesized operand have all been applied.
+			 * Any other `)`, as in the argument of `*s.fp((1))`, leaves the
+			 * count of a `*` outside it pending. */
+			if(names_cell) num_dereference_after_postfix = 0;
+			if(chain_follows)
+			{
+				num_dereference_after_postfix = 0;
+				Address_of = was_address_of;
+			}
 			postfix_operand_close = outer_close;
 			if(after_prefix_operator) prefix_member_operand = chain_follows;
 		}
