@@ -2243,6 +2243,8 @@ void primary_expr(void)
 			struct token_list* operand = global_token;
 			struct token_list* inner;
 			struct type* cast_type;
+			/* The operand's own primary expression clears the flag. */
+			int was_address_of = Address_of;
 			require_extra_token();
 			require_extra_token();
 			inner = global_token;
@@ -2257,6 +2259,10 @@ void primary_expr(void)
 				global_token = inner;
 				expression();
 				require_match("Error in Primary expression\nDidn't get )\n", ")");
+				/* `&*(p + 1)` is `p + 1`: the operand's value is the address the
+				 * dereference names, so it stays in the register with the
+				 * operand's type, as `&*s.p` leaves the value of s.p. */
+				if(was_address_of) return;
 				current_target = current_target->type;
 				if(!match("=", global_token->s) && !is_compound_assignment(global_token->s) && !closes_postfix_operand())
 				{
