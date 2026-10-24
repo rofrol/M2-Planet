@@ -914,11 +914,12 @@ void emit_va_end_intrinsic(void)
 int num_dereference_after_postfix;
 /* Set while an arrow chain is the operand of a prefix ++ or --. */
 int prefix_member_operand;
-/* The `)` that closes a parenthesized operand of a postfix ++ or --, NULL
- * otherwise. Inside `(*p)++` the token after the operand is that `)`, not the
- * operator, so the last dereference loaded the cell and the operator used its
- * value as an address. A dereference that sees this `)` as its next token
- * leaves the cell's address, as it does before `=`. */
+/* The `)` that closes a parenthesized operand of a postfix ++ or --, of `=`
+ * or of a compound assignment, NULL otherwise. Inside `(*p)++` and `(*p) = 7`
+ * the token after the operand is that `)`, not the operator, so the last
+ * dereference loaded the cell and the operator used its value as an address.
+ * A dereference that sees this `)` as its next token leaves the cell's
+ * address, as it does before `=`. */
 struct token_list* postfix_operand_close;
 
 int closes_postfix_operand(void)
@@ -1070,8 +1071,8 @@ struct token_list* primary_expr_variable(void)
 		return type;
 	}
 
-	/* `(*p)++` takes the store path too: the operand ends at the `)` before
-	 * the operator. */
+	/* `(*p)++` and `(*p) = 7` take the store path too: the operand ends at
+	 * the `)` before the operator. */
 	int is_assignment = match("=", global_token->s) || (is_prefix_operand && 0 != num_dereference) || closes_postfix_operand();
 	int is_compound_operator = is_compound_assignment(global_token->s);
 
@@ -1138,8 +1139,8 @@ void primary_expr_variable_postfix(void)
 	/* `*s.p` and `*q->p` dereference the member's value: primary_expr_variable
 	 * left the `*`s for after the member access. A postfix ++ or -- has applied
 	 * them already and cleared the count. The member access loads the pointer
-	 * unless an assignment follows; under a prefix ++ or --, or a postfix one
-	 * after the closing `)` of `(*s.p)++`, the last `*` leaves the cell's
+	 * unless an assignment follows; under a prefix ++ or --, or before the
+	 * closing `)` of `(*s.p)++` or `(*s.p) = 7`, the last `*` leaves the cell's
 	 * address for the operator. */
 	if(is_member)
 	{
@@ -1157,13 +1158,18 @@ void primary_expr_variable_postfix(void)
 		num_dereference_after_postfix = 0;
 		return;
 	}
+	/* `*b[0]` likewise: the subscript loads the element unless an assignment
+	 * follows, and before the closing `)` of `(*b[0])++` or `(*b[0]) = 7` the
+	 * last `*` leaves the cell's address. */
 	if(indexed && dereferences > 0)
 	{
 		is_lvalue = match("=", global_token->s) || is_compound_assignment(global_token->s);
+		names_cell = closes_postfix_operand();
 		while(dereferences > 0)
 		{
 			if(is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
 			current_target = current_target->type;
+			if(names_cell && 1 == dereferences) is_lvalue = TRUE;
 			if(!is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
 			dereferences = dereferences - 1;
 		}
@@ -2191,9 +2197,10 @@ void primary_expr(void)
 		}
 		else
 		{
-			/* `(*p)++` and `((*p))++`: the operand's last dereference leaves
-			 * the cell's address for the postfix operator, and its `*`s have
-			 * all been applied inside the parentheses. */
+			/* `(*p)++`, `((*p))++`, `(*p) = 7` and `(*p) += 2`: the
+			 * operand's last dereference leaves the cell's address for the
+			 * operator, and its `*`s have all been applied inside the
+			 * parentheses. */
 			struct token_list* close = matching_close_paren(global_token);
 			struct token_list* outer_close = postfix_operand_close;
 			int names_cell = FALSE;
@@ -2201,7 +2208,7 @@ void primary_expr(void)
 			{
 				if(NULL != close->next)
 				{
-					names_cell = match("++", close->next->s) || match("--", close->next->s) || close->next == outer_close;
+					names_cell = match("++", close->next->s) || match("--", close->next->s) || match("=", close->next->s) || is_compound_assignment(close->next->s) || close->next == outer_close;
 				}
 			}
 			if(names_cell) postfix_operand_close = close;
