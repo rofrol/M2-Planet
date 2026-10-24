@@ -912,8 +912,21 @@ void emit_va_end_intrinsic(void)
 }
 
 int num_dereference_after_postfix;
-/* Set while an arrow chain is the operand of a prefix ++ or --. */
+/* Set while a chain of members and subscripts is the operand of a prefix ++
+ * or --: the next step of the chain reads and clears it. The last step leaves
+ * the cell's address for the operator, a step the chain goes on through loads
+ * as usual and passes the flag on. */
 int prefix_member_operand;
+
+/* A member access or a subscript follows, so the chain goes on. */
+int continues_postfix_chain(void)
+{
+	if(match("[", global_token->s)) return TRUE;
+	if(match("->", global_token->s)) return TRUE;
+	if(match(".", global_token->s)) return TRUE;
+	return FALSE;
+}
+
 /* The `)` that closes a parenthesized operand of a postfix ++ or --, of `=`
  * or of a compound assignment, NULL otherwise. Inside `(*p)++` and `(*p) = 7`
  * the token after the operand is that `)`, not the operator, so the last
@@ -1132,9 +1145,9 @@ void primary_expr_variable_postfix(void)
 	int is_member = match(".", global_token->s) || match("->", global_token->s);
 	int is_lvalue;
 	int names_cell;
-	/* `++q->x`: the arrow chain leaves the last member's address for the
-	 * operator. */
-	prefix_member_operand = is_prefix_operator && 0 == dereferences && match("->", global_token->s);
+	/* `++q->x`, `++s.x`, `++p[i]` and `++q->p[i]`: the chain leaves the last
+	 * member's or element's address for the operator. */
+	prefix_member_operand = is_prefix_operator && 0 == dereferences && continues_postfix_chain();
 	postfix_expr_stub(symbol, NULL);
 	/* `*s.p` and `*q->p` dereference the member's value: primary_expr_variable
 	 * left the `*`s for after the member access. A postfix ++ or -- has applied
@@ -1159,12 +1172,12 @@ void primary_expr_variable_postfix(void)
 		return;
 	}
 	/* `*b[0]` likewise: the subscript loads the element unless an assignment
-	 * follows, and before the closing `)` of `(*b[0])++` or `(*b[0]) = 7` the
-	 * last `*` leaves the cell's address. */
+	 * follows, and under a prefix ++ or --, or before the closing `)` of
+	 * `(*b[0])++` or `(*b[0]) = 7`, the last `*` leaves the cell's address. */
 	if(indexed && dereferences > 0)
 	{
 		is_lvalue = match("=", global_token->s) || is_compound_assignment(global_token->s);
-		names_cell = closes_postfix_operand();
+		names_cell = is_prefix_operator || closes_postfix_operand();
 		while(dereferences > 0)
 		{
 			if(is_lvalue) emit_out(load_value(current_target->size, current_target->is_signed));
@@ -1285,15 +1298,12 @@ struct type* postfix_expr_arrow(void)
 	}
 
 	/* Under a prefix ++ or -- the chain's last member is the operand: its
-	 * address stays for the operator, while a member the next arrow goes
+	 * address stays for the operator, while a member the chain goes on
 	 * through is loaded as usual. */
 	if(is_prefix_operand)
 	{
-		if(match("->", global_token->s)) prefix_member_operand = TRUE;
-		else if(global_token->s[0] != '.' && !match("[", global_token->s))
-		{
-			if(!expression_is_array(NULL, i)) return i;
-		}
+		if(continues_postfix_chain()) prefix_member_operand = TRUE;
+		else if(!expression_is_array(NULL, i)) return i;
 	}
 
 	if(expression_is_array(NULL, i))
@@ -1381,6 +1391,8 @@ void postfix_expr_inc_or_dec(void)
 struct type* postfix_expr_dot(void)
 {
 	int is_address_of = Address_of;
+	int is_prefix_operand = prefix_member_operand;
+	prefix_member_operand = FALSE;
 	maybe_bootstrap_error("Member access using .");
 	emit_out("# looking up offset\n");
 	require_extra_token();
@@ -1392,6 +1404,13 @@ struct type* postfix_expr_dot(void)
 	if(0 != i->offset)
 	{
 		emit_add_immediate(REGISTER_ZERO, i->offset, ". offset calculation");
+	}
+	/* `++s.x` and `++gs.x`: the last member's address stays for the prefix
+	 * operator, as in postfix_expr_arrow. */
+	if(is_prefix_operand)
+	{
+		if(continues_postfix_chain()) prefix_member_operand = TRUE;
+		else if(!expression_is_array(NULL, i)) return i;
 	}
 	/* A subscript after the member indexes through it, so the load comes first
 	 * even under the address-of operator, which applies to the subscript's
@@ -1423,7 +1442,10 @@ struct type* postfix_expr_dot(void)
 
 void postfix_expr_array(struct token_list* symbol, struct type* member)
 {
-	char* prefix_operator = global_token->prev->prev->s;
+	/* Read before the index is parsed: the index is an expression of its own
+	 * and may hold a chain under a prefix operator too. */
+	int is_prefix_operator = prefix_member_operand;
+	prefix_member_operand = FALSE;
 	int was_address_of = Address_of;
 
 	struct type* array = current_target;
@@ -1464,7 +1486,17 @@ void postfix_expr_array(struct token_list* symbol, struct type* member)
 	require_match("ERROR in postfix_expr\nMissing ]\n", "]");
 	require(NULL != global_token, "truncated array expression\n");
 
-	int is_prefix_operator = match("++", prefix_operator) || match("--", prefix_operator);
+	/* Under a prefix ++ or -- only the chain's last subscript leaves the
+	 * element's address: `++q->p[i]` and `++s.a[i]` as well as `++p[i]`. An
+	 * element the chain goes on through is loaded as usual. */
+	if(is_prefix_operator)
+	{
+		if(continues_postfix_chain())
+		{
+			prefix_member_operand = TRUE;
+			is_prefix_operator = FALSE;
+		}
+	}
 	int is_postfix_operator = match("++", global_token->s) || match("--", global_token->s);
 	/* An intermediate element that the chain goes on through ([ or ->) must
 	 * still be loaded under `&`, which applies to the last operator's result:
@@ -2146,7 +2178,10 @@ void primary_expr(void)
 		emit_push(REGISTER_ONE, "Previous value");
 		emit_push(REGISTER_ZERO, "Address of variable");
 
-		emit_dereference(REGISTER_ZERO, "Deref to get value");
+		/* Load the cell at its own width, as the store below writes it and as
+		 * postfix_expr_inc_or_dec does: a full register load of a char cell
+		 * takes its neighbours into the value `++a[2]` yields. */
+		emit_out(load_value(current_target->size, current_target->is_signed));
 
 		int value = 1;
 		if(type_is_pointer(current_target))
