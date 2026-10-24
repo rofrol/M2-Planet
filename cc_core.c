@@ -2209,6 +2209,7 @@ void primary_expr(void)
 	}
 	else if(global_token->s[0] == '(')
 	{
+		int after_prefix_operator = match("++", global_token->prev->s) || match("--", global_token->prev->s);
 		require_extra_token();
 		struct type* type_size = fallible_type_name();
 		if(type_size != NULL)
@@ -2232,18 +2233,19 @@ void primary_expr(void)
 		}
 		else
 		{
-			/* `(*p)++`, `((*p))++`, `(*p) = 7` and `(*p) += 2`: the
-			 * operand's last dereference leaves the cell's address for the
-			 * operator, and its `*`s have all been applied inside the
-			 * parentheses. */
+			/* `(*p)++`, `((*p))++`, `(*p) = 7`, `(*p) += 2` and `++(*p)`:
+			 * the operand's last dereference leaves the cell's address for
+			 * the operator, and its `*`s have all been applied inside the
+			 * parentheses. A prefix operator stands before the `(`, so the
+			 * operand's own tokens cannot see it. */
 			struct token_list* close = matching_close_paren(global_token);
 			struct token_list* outer_close = postfix_operand_close;
-			int names_cell = FALSE;
+			int names_cell = after_prefix_operator;
 			if(NULL != close)
 			{
 				if(NULL != close->next)
 				{
-					names_cell = match("++", close->next->s) || match("--", close->next->s) || match("=", close->next->s) || is_compound_assignment(close->next->s) || close->next == outer_close;
+					names_cell = names_cell || match("++", close->next->s) || match("--", close->next->s) || match("=", close->next->s) || is_compound_assignment(close->next->s) || close->next == outer_close;
 				}
 			}
 			if(names_cell) postfix_operand_close = close;
@@ -2280,6 +2282,8 @@ void primary_expr(void)
 			struct type* cast_type;
 			/* The operand's own primary expression clears the flag. */
 			int was_address_of = Address_of;
+			/* `++*(p + 1)`: the operator stands before the `*`. */
+			int after_prefix_operator = match("++", operand->prev->s) || match("--", operand->prev->s);
 			int should_not_deref;
 			require_extra_token();
 			require_extra_token();
@@ -2304,7 +2308,7 @@ void primary_expr(void)
 				should_not_deref = current_target->type == current_target->type->type && (current_target->type->options & TO_FUNCTION_POINTER);
 				if(should_not_deref) return;
 				current_target = current_target->type;
-				if(!match("=", global_token->s) && !is_compound_assignment(global_token->s) && !closes_postfix_operand())
+				if(!after_prefix_operator && !match("=", global_token->s) && !is_compound_assignment(global_token->s) && !closes_postfix_operand())
 				{
 					emit_out(load_value(current_target->size, current_target->is_signed));
 				}
