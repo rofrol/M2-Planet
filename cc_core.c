@@ -2245,6 +2245,7 @@ void primary_expr(void)
 			struct type* cast_type;
 			/* The operand's own primary expression clears the flag. */
 			int was_address_of = Address_of;
+			int should_not_deref;
 			require_extra_token();
 			require_extra_token();
 			inner = global_token;
@@ -2263,6 +2264,10 @@ void primary_expr(void)
 				 * dereference names, so it stays in the register with the
 				 * operand's type, as `&*s.p` leaves the value of s.p. */
 				if(was_address_of) return;
+				/* `(*(fn))()` calls fn: a function pointer dereferences to
+				 * itself, as in primary_expr_variable. */
+				should_not_deref = current_target->type == current_target->type->type && (current_target->type->options & TO_FUNCTION_POINTER);
+				if(should_not_deref) return;
 				current_target = current_target->type;
 				if(!match("=", global_token->s) && !is_compound_assignment(global_token->s) && !closes_postfix_operand())
 				{
